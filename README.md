@@ -1,26 +1,45 @@
-# Epic Awesome Gamer
+# Epic 免费人 | Epic Awesome Gamer
 
-Gracefully claim weekly free games from Epic Store.
+An Epic Games weekly-freebies claimer for normal users.
 
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Ronchy2000/epic-awesome-gamer/epic-gamer.yml?branch=master&style=flat-square)](https://github.com/Ronchy2000/epic-awesome-gamer/actions/workflows/epic-gamer.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/github/license/Ronchy2000/epic-awesome-gamer?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Ronchy2000/epic-awesome-gamer?style=flat-square)](https://github.com/Ronchy2000/epic-awesome-gamer/stargazers)
 
-一个面向普通用户的 Epic 周免自动领取项目，支持 GitHub Actions 定时运行，验证码识别支持 `Gemini / AiHubMix / GLM`。
+一个面向普通用户的 Epic 周免自动领取项目。
+
+你只需要准备 Epic 账号和一个多模态模型 API Key，就可以借助 GitHub Actions 定时运行，自动处理登录、周免领取，以及领取过程中可能出现的验证码和二次校验。
 
 ---
 
 ## 功能概览
 
-这个项目会自动完成下面几件事：
-
-1. 登录 Epic 账号。
-2. 拉取当周免费游戏。
-3. 自动进入商品页并完成领取。
-4. 在需要时处理 hCaptcha 和结账页二次安全校验。
+| 功能 | 说明 |
+| --- | --- |
+| 自动登录 | 自动完成 Epic 账号登录 |
+| 自动发现周免 | 拉取并识别当周可领取游戏 |
+| 自动领取 | 自动进入商品页并完成结账流程 |
+| 验证码处理 | 支持登录验证码和 checkout 二次安全校验 |
+| 定时执行 | 可直接使用 GitHub Actions 定时运行 |
 
 默认最推荐的运行方式是 GitHub Actions，因为它不需要自己开电脑挂机，仓库也已经带好了可直接使用的工作流。
+
+---
+
+## 为什么推荐 GLM
+
+如果你是第一次接触这类项目，最推荐直接使用 GLM。
+
+| 原因 | 说明 |
+| --- | --- |
+| 门槛最低 | 只需要配置 `GLM_API_KEY` 和 `GLM_MODEL`，默认值已经帮你兜好 |
+| 对新人更友好 | 智谱官方提供免费视觉模型 [`glm-4.6v-flash`](https://docs.bigmodel.cn/cn/guide/models/free/glm-4.6v-flash)，新用户上手成本低 |
+| 价格最友好 | 对比大多数可用视觉模型，GLM 的使用门槛和成本都更低 |
+| 能力够用 | 可以直接处理登录验证码和 checkout 二次验证 |
+| 适配已经打通 | 当前仓库已经针对 GLM 的拖拽题、点选题和多选题做了兼容 |
+
+如果你只是想尽快跑通一次周免领取，优先从 GLM 开始通常是最省心的选择。
 
 ---
 
@@ -83,6 +102,8 @@ LLM_PROVIDER=glm
 GLM_API_KEY=你的智谱 API Key
 GLM_MODEL=glm-4.6v-flash
 ```
+
+如果你不知道该填哪个模型，直接从 `glm-4.6v-flash` 开始即可。
 
 #### 可选配置：Gemini / AiHubMix
 
@@ -228,6 +249,19 @@ docker compose up -d --build
 如果你想看项目结构、适配细节、开发者排障记录和这次踩过的坑，请继续阅读：
 
 - [开发者进阶文档](docs/advanced.md)
+
+---
+
+## 致谢
+
+这个项目的实现和整理，直接受到了下面两个仓库的启发：
+
+| 项目 | 说明 |
+| --- | --- |
+| [QIN2DIM/epic-awesome-gamer](https://github.com/QIN2DIM/epic-awesome-gamer) | 原始项目与核心自动化思路来源 |
+| [10000ge10000/epic-kiosk](https://github.com/10000ge10000/epic-kiosk) | GitHub Actions 化和文档组织方式的重要参考 |
+
+感谢原作者和维护者的工作。
 
 ---
 
