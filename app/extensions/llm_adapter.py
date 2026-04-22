@@ -11,6 +11,15 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel
 
+KNOWN_CHALLENGE_TYPES = {
+    "image_drag_single",
+    "image_drag_multiple",
+    "image_label_binary",
+    "image_label_multi_select",
+    "image_label_area_select",
+    "image_label_multiple_choice",
+}
+
 
 def _ensure_list(value: Any) -> list[Any]:
     if value is None:
@@ -116,6 +125,13 @@ def _normalize_glm_response_text(text: str) -> str:
     return stripped
 
 
+def _extract_challenge_type(text: str) -> str | None:
+    stripped = text.strip().strip('"').strip("'")
+    if stripped in KNOWN_CHALLENGE_TYPES:
+        return stripped
+    return None
+
+
 def _extract_drag_points_from_text(text: str) -> tuple[dict[str, int], dict[str, int]] | None:
     stripped = text.strip()
     if not stripped:
@@ -156,6 +172,34 @@ def _extract_drag_points_from_text(text: str) -> tuple[dict[str, int], dict[str,
     return None
 
 
+def _extract_points_from_text(text: str) -> list[dict[str, int]]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+
+    with suppress(Exception):
+        payload = _extract_json_payload(stripped)
+        points_payload = payload.get("points")
+        if isinstance(points_payload, list):
+            points = []
+            for point in points_payload:
+                normalized = _coerce_point(point)
+                if normalized:
+                    points.append(normalized)
+            if points:
+                return points
+
+    tuple_points = re.findall(r"\((\d+)\s*,\s*(\d+)\)", stripped)
+    if tuple_points:
+        return [{"x": int(x), "y": int(y)} for x, y in tuple_points]
+
+    array_points = re.findall(r"\[\s*(\d+)\s*,\s*(\d+)\s*\]", stripped)
+    if array_points:
+        return [{"x": int(x), "y": int(y)} for x, y in array_points]
+
+    return []
+
+
 def _coerce_point(value: Any) -> dict[str, int] | None:
     if isinstance(value, dict):
         if "x" in value and "y" in value:
@@ -172,6 +216,22 @@ def _coerce_point(value: Any) -> dict[str, int] | None:
             return {"x": x, "y": y}
 
     return None
+
+
+def _build_points_payload(
+    points: list[dict[str, int]],
+    *,
+    challenge_prompt: str = "",
+    inferred_rule: str = "",
+) -> dict[str, Any] | None:
+    if not points:
+        return None
+
+    return {
+        "challenge_prompt": challenge_prompt,
+        "inferred_rule": inferred_rule,
+        "points": points,
+    }
 
 
 def _build_drag_payload(
@@ -215,6 +275,14 @@ def _normalize_glm_answer_value(
     if not stripped:
         return None
 
+    challenge_type = _extract_challenge_type(stripped)
+    if challenge_type:
+        return {
+            "challenge_prompt": challenge_prompt,
+            "challenge_type": challenge_type,
+            "request_type": challenge_type,
+        }
+
     points = _extract_drag_points_from_text(stripped)
     if points:
         return _build_drag_payload(
@@ -223,6 +291,14 @@ def _normalize_glm_answer_value(
             challenge_prompt=challenge_prompt,
             inferred_rule=inferred_rule,
         )
+
+    point_payload = _build_points_payload(
+        _extract_points_from_text(stripped),
+        challenge_prompt=challenge_prompt,
+        inferred_rule=inferred_rule,
+    )
+    if point_payload:
+        return point_payload
 
     normalized_text = _normalize_glm_response_text(stripped)
     with suppress(Exception):
@@ -236,6 +312,64 @@ def _normalize_glm_answer_value(
         )
 
     return None
+
+
+def _schema_field_names(schema: Any) -> set[str]:
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
+        return set(getattr(schema, "model_fields", {}).keys())
+    if hasattr(schema, "keys"):
+        with suppress(Exception):
+            return set(schema.keys())
+    return set()
+
+
+def _coerce_payload_for_schema(payload: dict[str, Any], schema: Any, text: str) -> dict[str, Any]:
+    fields = _schema_field_names(schema)
+    if not fields:
+        return payload
+
+    challenge_prompt = str(payload.get("challenge_prompt") or "")
+    inferred_rule = str(payload.get("inferred_rule") or "")
+
+    if "paths" in fields and "paths" in payload:
+        payload.setdefault("challenge_prompt", challenge_prompt)
+        payload.setdefault("inferred_rule", inferred_rule)
+        return payload
+
+    if "points" in fields:
+        if "points" in payload:
+            payload.setdefault("challenge_prompt", challenge_prompt)
+            payload.setdefault("inferred_rule", inferred_rule)
+            return payload
+        point_payload = _build_points_payload(
+            _extract_points_from_text(text),
+            challenge_prompt=challenge_prompt,
+            inferred_rule=inferred_rule,
+        )
+        if point_payload:
+            return point_payload
+
+    challenge_type_field = next(
+        (name for name in ("challenge_type", "request_type", "task_type", "type") if name in fields),
+        None,
+    )
+    if challenge_type_field:
+        challenge_type = (
+            payload.get(challenge_type_field)
+            or payload.get("challenge_type")
+            or payload.get("request_type")
+            or _extract_challenge_type(text)
+            or _extract_challenge_type(str(payload.get("answer") or ""))
+        )
+        if challenge_type:
+            normalized = {challenge_type_field: challenge_type}
+            if "challenge_prompt" in fields:
+                normalized["challenge_prompt"] = challenge_prompt
+            if "requester_question" in fields and challenge_prompt:
+                normalized["requester_question"] = challenge_prompt
+            return normalized
+
+    return payload
 
 
 def _normalize_glm_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -426,10 +560,26 @@ class _GLMAsyncModels:
             return None
 
         try:
-            payload = _normalize_glm_payload(_extract_json_payload(text))
+            payload = _coerce_payload_for_schema(
+                _normalize_glm_payload(_extract_json_payload(text)),
+                schema,
+                text,
+            )
         except Exception:
-            logger.warning("GLM structured parse fallback failed | raw_text={}", text[:500])
-            return None
+            normalized = _normalize_glm_answer_value(text)
+            if normalized:
+                payload = _coerce_payload_for_schema(normalized, schema, text)
+            else:
+                challenge_type = _extract_challenge_type(text)
+                if challenge_type:
+                    payload = _coerce_payload_for_schema(
+                        {"challenge_type": challenge_type, "request_type": challenge_type},
+                        schema,
+                        text,
+                    )
+                else:
+                    logger.warning("GLM structured parse fallback failed | raw_text={}", text[:500])
+                    return None
 
         if isinstance(schema, type) and issubclass(schema, BaseModel):
             return schema(**payload)
